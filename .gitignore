@@ -1,6 +1,14 @@
 .env
 
-# Python virtual environment
 venv/
 *.pyc
 __pycache__/
+
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+
+.pytest_cache/
+.coverage
+htmlcov/
