@@ -13,7 +13,8 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 import models
 from models import SubmissionSource, IssueStatus, UserSubmissionType
 from database import engine, get_db
-
+from typing import  Optional
+from sqlalchemy import  func
 load_dotenv()
 OLLAMA_API_URL = os.getenv("OLLAMA_API_URL", "http://localhost:11434/api/generate")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma3:27b")
@@ -174,22 +175,35 @@ def submit_issue(item: IssueSubmissionItem, db: Session = Depends(get_db)):
     )
 
 
+from typing import List
+from sqlalchemy import or_
+
 
 @app.get("/issues/", response_model=List[IssueDetails])
 def get_issues_for_user(
-    source: SubmissionSource,
-    source_user_id: str,
-    db: Session = Depends(get_db),
-    skip: int = 0,
-    limit: int = 20
+        source_user_id: str,
+        db: Session = Depends(get_db),
+        source: Optional[SubmissionSource] = None,  # Делаем source опциональным
+        skip: int = 0,
+        limit: int = 20
 ):
-    issues = db.query(models.ComplaintAnalysis)\
-               .filter(models.ComplaintAnalysis.source == source,
-                       models.ComplaintAnalysis.source_user_id == source_user_id)\
-               .order_by(models.ComplaintAnalysis.created_at.desc())\
-               .offset(skip)\
-               .limit(limit)\
-               .all()
+    search_term_lower = source_user_id.lower()
+
+    query = db.query(models.ComplaintAnalysis).filter(
+        or_(
+            func.lower(models.ComplaintAnalysis.source_user_id) == search_term_lower,
+            func.lower(models.ComplaintAnalysis.source_username) == search_term_lower
+        )
+    )
+
+    if source:
+        query = query.filter(models.ComplaintAnalysis.source == source)
+
+    issues = query.order_by(models.ComplaintAnalysis.created_at.desc()) \
+        .offset(skip) \
+        .limit(limit) \
+        .all()
+
     if not issues:
         return []
     return issues
