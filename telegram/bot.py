@@ -1,5 +1,3 @@
-# bot.py (Telegram Bot)
-
 import logging
 import os
 from datetime import datetime
@@ -28,20 +26,19 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-CHOOSE_ACTION, GET_COMPLAINT, GET_REQUEST = range(3)
-
+CHOOSE_ACTION, GET_COMPLAINT = range(2)
 
 SUBMISSION_TYPE_KEY = "submission_type"
 COMPLAINT_KEYWORD_RU = "жалоба"
-REQUEST_KEYWORD_RU = "просьба"
+
+
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.effective_user
     await update.message.reply_html(
-        rf"Привет, {user.mention_html()}! Я бот для сбора жалоб и просьб."
+        rf"Привет, {user.mention_html()}! Я бот для сбора жалоб."
         f"\n\nЧтобы подать жалобу, напишите: <b>{COMPLAINT_KEYWORD_RU}</b>"
-        f"\nЧтобы оставить просьбу, напишите: <b>{REQUEST_KEYWORD_RU}</b>"
         f"\n\nВы также можете использовать команду /cancel для отмены в любой момент "
         f"или /my_submissions для просмотра ваших заявок."
     )
@@ -53,22 +50,15 @@ async def choose_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     context.user_data[SUBMISSION_TYPE_KEY] = None
 
     if text == COMPLAINT_KEYWORD_RU:
-        context.user_data[SUBMISSION_TYPE_KEY] = COMPLAINT_KEYWORD_RU  # Store "жалоба"
+        context.user_data[SUBMISSION_TYPE_KEY] = COMPLAINT_KEYWORD_RU
         await update.message.reply_text(
             "Пожалуйста, опишите вашу жалобу:",
             reply_markup=ReplyKeyboardRemove()
         )
         return GET_COMPLAINT
-    elif text == REQUEST_KEYWORD_RU:
-        context.user_data[SUBMISSION_TYPE_KEY] = REQUEST_KEYWORD_RU  # Store "просьба"
-        await update.message.reply_text(
-            "Пожалуйста, опишите вашу просьбу:",
-            reply_markup=ReplyKeyboardRemove()
-        )
-        return GET_REQUEST
     else:
         await update.message.reply_text(
-            f"Пожалуйста, введите '{COMPLAINT_KEYWORD_RU}' или '{REQUEST_KEYWORD_RU}', "
+            f"Пожалуйста, введите '{COMPLAINT_KEYWORD_RU}', "
             f"или используйте /cancel для отмены."
         )
         return CHOOSE_ACTION
@@ -77,7 +67,7 @@ async def choose_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 async def process_submission(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_text = update.message.text
     user = update.effective_user
-    submission_type_by_user = context.user_data.get(SUBMISSION_TYPE_KEY)
+    submission_type_by_user = context.user_data.get(SUBMISSION_TYPE_KEY)  # Will be "жалоба"
 
     if not submission_type_by_user:
         await update.message.reply_text(
@@ -87,7 +77,7 @@ async def process_submission(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     payload = {
         "text": user_text,
-        "submission_type_by_user": submission_type_by_user,
+        "submission_type_by_user": submission_type_by_user,  # This will be "жалоба"
         "source": "telegram",
         "source_user_id": str(user.id),
         "source_username": user.username,
@@ -101,7 +91,7 @@ async def process_submission(update: Update, context: ContextTypes.DEFAULT_TYPE)
         try:
             logger.info(f"Sending to API: {CENTRAL_API_URL} with payload: {payload}")
             response = await client.post(CENTRAL_API_URL, json=payload)
-            response.raise_for_status()  # Raises HTTPStatusError for 4xx/5xx
+            response.raise_for_status()
 
             api_data = response.json()
             logger.info(f"API Response for user {user.id}: {api_data}")
@@ -111,19 +101,18 @@ async def process_submission(update: Update, context: ContextTypes.DEFAULT_TYPE)
             llm_error = api_data.get("llm_processing_error")
             analysis_results = api_data.get("analysis")
 
-            api_response_message = f"Спасибо! Ваша {submission_type_by_user} принята (ID: #{saved_record_id}, Статус: {api_status})."
+            api_response_message = f"Спасибо! Ваша {COMPLAINT_KEYWORD_RU} принята (ID: #{saved_record_id}, Статус: {api_status})."
 
-            if submission_type_by_user == COMPLAINT_KEYWORD_RU:
-                if llm_error:
-                    api_response_message += f"\n\n⚠️ Не удалось полностью автоматически проанализировать жалобу. Причина: {llm_error[:200]}"
-                elif analysis_results and analysis_results.get("responsible_department"):
-                    dept = analysis_results.get("responsible_department")
-                    comp_type = analysis_results.get("complaint_type", "не определен")
-                    api_response_message += f"\n\nАнализ: Ведомство - {dept}, Тип - {comp_type}."
-                elif api_status == "analysis_failed" and not llm_error:
-                    api_response_message += "\n\nАнализ: Не удалось определить ответственное ведомство по тексту."
-                elif api_status != "analyzed":
-                    api_response_message += "\nЖалоба принята, но автоматический анализ не был успешно завершен."
+            if llm_error:
+                api_response_message += f"\n\n⚠️ Не удалось полностью автоматически проанализировать жалобу. Причина: {llm_error[:200]}"
+            elif analysis_results and analysis_results.get("responsible_department"):
+                dept = analysis_results.get("responsible_department")
+                comp_type = analysis_results.get("complaint_type", "не определен")  # e.g. личная / общегражданская
+                api_response_message += f"\n\nАнализ: Ведомство - {dept}, Тип - {comp_type}."
+            elif api_status == "analysis_failed" and not llm_error:
+                api_response_message += "\n\nАнализ: Не удалось определить ответственное ведомство по тексту."
+            elif api_status != "analyzed":
+                api_response_message += "\nЖалоба принята, но автоматический анализ не был успешно завершен."
 
 
         except httpx.HTTPStatusError as e:
@@ -150,8 +139,8 @@ async def process_submission(update: Update, context: ContextTypes.DEFAULT_TYPE)
     context.user_data.pop(SUBMISSION_TYPE_KEY, None)
     if saved_record_id:
         await update.message.reply_html(
-            f"Хотите подать еще одну заявку? \n"
-            f"Напишите: <b>{COMPLAINT_KEYWORD_RU}</b> или <b>{REQUEST_KEYWORD_RU}</b>.\n"
+            f"Хотите подать еще одну жалобу? \n"
+            f"Напишите: <b>{COMPLAINT_KEYWORD_RU}</b>.\n"
             f"Или используйте /cancel для завершения, или /my_submissions для просмотра ваших заявок."
         )
         return CHOOSE_ACTION
@@ -177,7 +166,7 @@ async def my_submissions_command(update: Update, context: ContextTypes.DEFAULT_T
             submissions_list = response.json()
 
             if not submissions_list:
-                await update.message.reply_text("У вас пока нет зарегистрированных жалоб или просьб.")
+                await update.message.reply_text("У вас пока нет зарегистрированных жалоб.")
                 return
 
             response_parts = []
@@ -185,24 +174,28 @@ async def my_submissions_command(update: Update, context: ContextTypes.DEFAULT_T
             MAX_MESSAGE_LENGTH = 4096
 
             for sub_data in submissions_list:
-                text_preview = (sub_data['original_complaint'][:75] + '...') if len(
-                    sub_data['original_complaint']) > 75 else sub_data['original_complaint']
+                text_preview = (sub_data['original_complaint_text'][:75] + '...') if len(
+                    sub_data['original_complaint_text']) > 75 else sub_data['original_complaint_text']
+
                 entry = (
                     f"<b>ID:</b> {sub_data['id']}\n"
-                    f"<b>Тип (заявленный):</b> {sub_data.get('submission_type_by_user', 'N/A')}\n"
+                    f"<b>Тип:</b> {sub_data.get('submission_type_by_user', 'жалоба')}\n"
                     f"<b>Статус:</b> {sub_data['status']}\n"
                     f"<b>Текст:</b> {text_preview}\n"
                 )
-                if sub_data.get('submission_type_by_user') == COMPLAINT_KEYWORD_RU:
-                    if sub_data.get('responsible_department'):
-                        entry += f"<b>Отв. ведомство (анализ):</b> {sub_data['responsible_department']}\n"
-                    if sub_data.get('complaint_type'):  # LLM's classification
-                        entry += f"<b>Тип (анализ):</b> {sub_data['complaint_type']}\n"
-                    if sub_data.get('address'):
-                        entry += f"<b>Адрес (анализ):</b> {sub_data['address'][:50]}...\n"
-                    if sub_data.get('llm_processing_error'):
-                        entry += f"<b>Ошибка анализа:</b> {sub_data['llm_processing_error'][:70]}...\n"
 
+                if sub_data.get('responsible_department'):
+                    entry += f"<b>Отв. ведомство (анализ):</b> {sub_data['responsible_department']}\n"
+                if sub_data.get('complaint_type'):
+                    entry += f"<b>Тип (анализ):</b> {sub_data['complaint_type']}\n"
+                if sub_data.get('complaint_category'):
+                    entry += f"<b>Категория (анализ):</b> {sub_data['complaint_category']}\n"
+                if sub_data.get('address_text'):
+                    entry += f"<b>Адрес (анализ):</b> {sub_data['address_text'][:50]}...\n"
+                if sub_data.get('severity_level'):
+                    entry += f"<b>Серьезность (анализ):</b> {sub_data['severity_level']}\n"
+                if sub_data.get('llm_processing_error'):
+                    entry += f"<b>Ошибка анализа:</b> {sub_data['llm_processing_error'][:70]}...\n"
 
                 created_at_str = 'N/A'
                 if sub_data.get('created_at'):
@@ -219,7 +212,7 @@ async def my_submissions_command(update: Update, context: ContextTypes.DEFAULT_T
                     current_message = ""
                 current_message += entry
 
-            if current_message:
+            if current_message and current_message.strip() != "Ваши заявки:\n\n":
                 response_parts.append(current_message)
 
             if not response_parts:
@@ -257,17 +250,17 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     help_text = (
-        "Я бот для сбора ваших жалоб и просьб. Все данные централизованно обрабатываются нашей системой.\n\n"
+        "Я бот для сбора ваших жалоб. Все данные централизованно обрабатываются нашей системой.\n\n"
         "<b>Основные команды:</b>\n"
-        "/start - начать процесс подачи жалобы или просьбы.\n"
+        "/start - начать процесс подачи жалобы.\n"
         "/my_submissions - посмотреть список ваших предыдущих заявок и их статусы.\n"
         "/cancel - отменить текущее действие (например, если вы передумали писать жалобу).\n"
         "/help - показать это сообщение.\n\n"
         "<b>Как подать заявку:</b>\n"
         "1. Введите /start.\n"
-        f"2. Напишите '{COMPLAINT_KEYWORD_RU}' для жалобы или '{REQUEST_KEYWORD_RU}' для просьбы.\n"
+        f"2. Напишите '{COMPLAINT_KEYWORD_RU}' для жалобы.\n"
         "3. Следуйте инструкциям бота и опишите вашу ситуацию.\n"
-        "Если вы подаете жалобу, она будет автоматически проанализирована для определения ответственного ведомства.\n"
+        "Ваша жалоба будет автоматически проанализирована для определения ответственного ведомства.\n"
         "После отправки заявка будет зарегистрирована в центральной системе."
     )
     await update.message.reply_html(help_text)
@@ -285,7 +278,8 @@ def main() -> None:
         return
 
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-    keywords_regex = f"^({COMPLAINT_KEYWORD_RU}|{REQUEST_KEYWORD_RU})$"
+
+    keywords_regex = f"^({COMPLAINT_KEYWORD_RU})$"
 
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
@@ -295,7 +289,6 @@ def main() -> None:
                 MessageHandler(filters.TEXT & ~filters.COMMAND, choose_action)
             ],
             GET_COMPLAINT: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_submission)],
-            GET_REQUEST: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_submission)],
         },
         fallbacks=[CommandHandler("cancel", cancel), CommandHandler("start", start)],
         allow_reentry=True

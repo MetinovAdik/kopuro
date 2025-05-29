@@ -289,6 +289,37 @@ def submit_issue(item: IssueSubmissionItem, db: Session = Depends(get_db)):
     )
 
 
+class IssueListParams(BaseModel):
+    skip: int = Query(0, ge=0)
+    limit: int = Query(20, ge=1, le=100)
+    sort_by: str = Query("created_at", description="Поле для сортировки (id, created_at, status, etc.)")
+    order: str = Query("desc", description="Порядок сортировки (asc или desc)")
+
+
+@app.get("/all_issues/", response_model=List[IssueDetails],
+         summary="Получить список всех обращений (для работников/админов)")
+def get_all_issues(
+        params: IssueListParams = Depends(),
+        db: Session = Depends(get_db),
+        current_user: auth_models.User = Depends(auth_deps.get_current_active_user)  # Защита эндпоинта
+):
+
+    query = db.query(ComplaintAnalysis)
+
+    sort_column_name = params.sort_by
+    if not hasattr(ComplaintAnalysis, sort_column_name):
+        sort_column_name = "created_at"
+
+    sort_column = getattr(ComplaintAnalysis, sort_column_name)
+
+    if params.order.lower() == "desc":
+        query = query.order_by(desc(sort_column))
+    else:
+        query = query.order_by(sort_column)
+
+    issues = query.offset(params.skip).limit(params.limit).all()
+    return issues
+
 @app.get("/issues/", response_model=List[IssueDetails])
 def get_issues_for_user(
         source_user_id: str,
@@ -484,11 +515,9 @@ def get_overall_stats(
         ComplaintAnalysis.severity_level,
         func.count(ComplaintAnalysis.id).label("count")
     ).group_by(ComplaintAnalysis.severity_level).order_by(desc("count")).all()
-
     by_severity = [
-        StatsBySeverityItem(severity=row.severity_level if row.severity_level else "Не указан", count=row.count) for row
+        StatsBySeverityItem(severity=row.severity_level, count=row.count) for row
         in stats_severity_query]
-
     return OverallStatsResponse(
         total_issues=total_issues,
         by_category=by_category,
@@ -556,7 +585,7 @@ def get_timeline_stats(
 
 @app.get("/stats/top_problematic_addresses", response_model=List[dict], summary="Топ проблемных адресов")
 def get_top_problematic_addresses(
-        limit: int = Query(10, ge=1, le=100),
+        limit: int = Query(1, ge=1, le=100),
         db: Session = Depends(get_db),
         date_from: Optional[datetime] = None,
         date_to: Optional[datetime] = None,
